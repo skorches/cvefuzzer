@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.tools/
+.cvefuzz/
+build/
+dist/
+
+# Local development plan and machine-specific settings
+/PLAN.md
+.env
+.env.*
+!.env.example
