@@ -1,0 +1,2 @@
+# Deliberately old dependency for local scanner integration; do not install.
+jinja2==2.4.1

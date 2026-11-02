@@ -14,7 +14,7 @@ REGISTRY = {
 
 def capabilities():
     return {
-        language: {"inventory": True, "dependency_scan": False,
+        language: {"inventory": True, "dependency_scan": language in {"python", "javascript", "typescript"},
                    "static_analysis": False, "reachability": False,
                    "build": False, "fuzzing": False}
         for language in REGISTRY

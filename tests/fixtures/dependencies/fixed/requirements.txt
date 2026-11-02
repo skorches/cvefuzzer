@@ -1,0 +1,2 @@
+# Synthetic fixture version used by mocked advisory tests; not installed.
+fixture-package==2.0.0
