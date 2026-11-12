@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..findings import Component, Finding
+from .npm import dependency_paths
 
 SUPPORTED = {"requirements.txt", "package-lock.json"}
 
@@ -125,6 +126,17 @@ def scan_dependencies(root, inventory, executable, artifact_dir, scanned_at, tim
             if process.returncode not in (0, 1):
                 raise ValueError(f"scanner exited {process.returncode}; see {log_path}")
             components, findings = normalize(json.loads(process.stdout), relative, result.version, scanned_at)
+            if Path(relative).name == "package-lock.json":
+                try:
+                    paths, gaps = dependency_paths(root / relative)
+                    result.issues.extend(f"{relative}: {gap}" for gap in gaps)
+                    for component in components:
+                        if component.ecosystem == "npm":
+                            component.dependency_path = paths.get((component.name, component.version), [])
+                            if not component.dependency_path:
+                                result.issues.append(f"Unresolved npm provenance: {component.name}@{component.version} in {relative}")
+                except (OSError, ValueError, TypeError, AttributeError) as error:
+                    result.issues.append(f"{relative}: npm provenance unavailable: {error}")
             raw = json.loads(process.stdout)
             for source in raw["results"]:
                 for entry in source["packages"]:
