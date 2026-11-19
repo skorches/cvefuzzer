@@ -73,3 +73,19 @@ class NpmTests(unittest.TestCase):
                 path.write_text(json.dumps(data))
                 with self.assertRaises(ValueError):
                     dependency_paths(path)
+
+    def test_unreferenced_workspace_link_and_malformed_peer_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "package-lock.json"
+            data = self.lock()
+            data["packages"][""]["workspaces"] = ["packages/*"]
+            data["packages"]["node_modules/workspace"] = {"link": True, "resolved": "packages/workspace"}
+            path.write_text(json.dumps(data))
+            paths, issues = dependency_paths(path)
+            self.assertEqual(len(issues), 2)
+            self.assertIn(("a", "1"), paths)
+            for metadata in ([], {"peer": None}):
+                data["packages"][""]["peerDependenciesMeta"] = metadata
+                path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError):
+                    dependency_paths(path)

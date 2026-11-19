@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ..findings import Component, Finding
 from .npm import dependency_paths
+from .requirements import requirements_issues
 
 SUPPORTED = {"requirements.txt", "package-lock.json"}
 
@@ -112,6 +113,14 @@ def scan_dependencies(root, inventory, executable, artifact_dir, scanned_at, tim
     config.write_text("# CVEFuzz: no repository suppressions\n", encoding="utf-8")
     result.artifacts.append(str(config))
     for number, relative in enumerate(selected):
+        if Path(relative).name == "requirements.txt":
+            try:
+                gaps = requirements_issues(root / relative)
+            except (OSError, ValueError) as error:
+                gaps = [f"Requirements input unavailable: {error}"]
+            if gaps:
+                result.issues.extend(f"{relative}: {gap}; input skipped" for gap in gaps)
+                continue
         prefix = artifact_dir / f"osv-{number}"
         raw_path, log_path = prefix.with_suffix(".json"), prefix.with_suffix(".log")
         command = [str(executable), "scan", "source", "--format", "json", "--all-packages", "--all-vulns",

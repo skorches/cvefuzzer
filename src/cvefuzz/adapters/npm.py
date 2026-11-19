@@ -7,6 +7,8 @@ import json
 def dependency_paths(lockfile):
     """Return one deterministic shortest declared path per name/version, plus gaps."""
     data = json.loads(lockfile.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict):
+        raise ValueError("npm lockfile must be an object")
     if data.get("lockfileVersion") not in (2, 3):
         raise ValueError("npm provenance supports lockfileVersion 2 and 3 only")
     packages = data.get("packages")
@@ -19,11 +21,19 @@ def dependency_paths(lockfile):
             raise ValueError(f"Invalid npm package version: {location}")
         if "name" in package and not isinstance(package["name"], str):
             raise ValueError(f"Invalid npm package name: {location}")
+        metadata = package.get("peerDependenciesMeta", {})
+        if not isinstance(metadata, dict) or any(not isinstance(value, dict) for value in metadata.values()):
+            raise ValueError(f"Invalid npm peerDependenciesMeta: {location}")
         for field in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
             entries = package.get(field, {})
             if not isinstance(entries, dict) or any(not isinstance(value, str) for value in entries.values()):
                 raise ValueError(f"Invalid npm {field}: {location}")
     paths, issues, visited = {}, [], {""}
+    for location, package in packages.items():
+        if package.get("link"):
+            issues.append(f"Linked npm package provenance unsupported: {location}")
+        if package.get("workspaces"):
+            issues.append(f"npm workspace provenance unsupported: {location or '<root>'}")
     queue = deque([("", [])])
     while queue:
         location, chain = queue.popleft()
