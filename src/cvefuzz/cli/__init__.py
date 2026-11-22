@@ -9,6 +9,8 @@ from uuid import uuid4
 from .. import __version__
 from ..adapters import capabilities
 from ..adapters.osv import scan_dependencies
+from ..advisories.osv import OSVClient
+from ..advisories.refresh import refresh_saved
 from ..findings import Scan
 from ..inventory import discover
 from ..reports import render_html
@@ -20,7 +22,7 @@ def now():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="cvefuzz", description="Repository inventory and known dependency vulnerability scanning.")
+    parser = argparse.ArgumentParser(prog="cvefuzz", description="Repository inventory, dependency vulnerability scanning, and saved-inventory advisory refresh.")
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("capabilities", help="Show implemented capabilities by language")
@@ -38,13 +40,51 @@ def main(argv=None):
     dependency.add_argument("--osv-scanner", default="osv-scanner", help="Trusted OSV-Scanner v2 executable")
     dependency.add_argument("--timeout", type=int, default=120, help="Per-lockfile timeout in seconds")
     dependency.add_argument("--fail-on", choices=["findings", "never"], default="findings", help="Operational errors always exit 2")
+    refresh = commands.add_parser("refresh", help="Requery OSV for a saved scan without reading repository files")
+    refresh.add_argument("scan_id", help="scan_id from a saved scan report")
+    refresh.add_argument("--database", type=Path, default=Path(".cvefuzz/scans.sqlite3"))
+    refresh.add_argument("--output", type=Path)
+    refresh.add_argument("--html", type=Path)
+    refresh.add_argument("--timeout", type=int, default=30, help="Time budget per package query or withdrawal lookup, in seconds")
+    refresh.add_argument("--retries", type=int, choices=range(6), default=2, help="Retries per request within its time budget (0-5)")
+    refresh.add_argument("--offline", action="store_true", help="Show retained findings without network access; exits 2")
+    refresh.add_argument("--fail-on", choices=["findings", "never"], default="findings")
+    history = commands.add_parser("history", help="Show saved advisory refresh attempts and finding changes")
+    history.add_argument("scan_id")
+    history.add_argument("--database", type=Path, default=Path(".cvefuzz/scans.sqlite3"))
     args = parser.parse_args(argv)
     if args.command == "capabilities":
         print(json.dumps(capabilities(), indent=2))
         return 0
-    if args.command == "scan" and args.timeout <= 0:
+    if args.command in {"scan", "refresh"} and args.timeout <= 0:
         parser.error("--timeout must be positive")
     try:
+        if args.command in {"refresh", "history"}:
+            store = Store(args.database)
+            try:
+                if args.command == "history":
+                    if store.get(args.scan_id) is None:
+                        raise ValueError(f"Saved scan not found: {args.scan_id}")
+                    print(json.dumps(store.refresh_history(args.scan_id), indent=2))
+                    return 0
+                result = refresh_saved(store, args.scan_id, client=OSVClient(args.timeout, args.retries), offline=args.offline,
+                                       configuration={"timeout": args.timeout, "retries": args.retries})
+            finally:
+                store.close()
+            rendered = json.dumps(result, indent=2) + "\n"
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(rendered, encoding="utf-8")
+            else:
+                print(rendered, end="")
+            if args.html:
+                args.html.parent.mkdir(parents=True, exist_ok=True)
+                args.html.write_text(render_html(result), encoding="utf-8")
+            print(f"Advisory refresh {result['status']}: {len(result['findings'])} retained/current findings; "
+                  f"dependency inventory unchanged. Original coverage: {result['inventory_status']}.", file=sys.stderr)
+            if result["status"] != "completed" or not result["coverage_complete"]:
+                return 2
+            return 1 if result["findings"] and args.fail_on == "findings" else 0
         started = now()
         data = discover(args.path, args.exclude)
         scan = Scan(str(uuid4()), str(args.path.resolve()), started, now(),
