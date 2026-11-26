@@ -1,8 +1,10 @@
 # CVEFuzz
 
-Local-first, multi-language security testing controller. Inventories repositories, checks selected dependency files with OSV-Scanner v2, rechecks saved inventories against OSV, and stores versioned results in SQLite with JSON/HTML reports. Scheduled advisory updates, static analysis, and fuzzing are not implemented yet.
+Local-first, multi-language security testing controller. Inventories repositories, checks selected dependency files with OSV-Scanner v2, rechecks saved projects against OSV on demand or through an operating-system scheduler, and stores versioned results in SQLite with JSON/HTML reports. An initial local Semgrep adapter supports static warnings; live engine validation is outstanding. Fuzzing is not implemented yet.
 
 Requires Python 3.11 or newer. No runtime dependencies. From PowerShell:
+
+For the initial Semgrep `static` command, capability matrix, rule licenses, resource limits, and current validation gaps, see [static analysis](docs/static-analysis.md).
 
 For local development, `cvefuzz.cmd` can use a separately downloaded portable Python runtime under `.tools/python`. That runtime is not distributed with this repository. Use a full Python installation for the instructions below.
 
@@ -80,4 +82,26 @@ The updater commits the entire successful snapshot and history in one SQLite tra
 
 `--timeout 30` sets the time budget per package query or advisory lookup, shared across its pages and retries; it is not a whole-refresh limit. The client checks deadlines between response reads and uses the remaining budget as the socket timeout. `--retries 2` retries transient network failures and HTTP 408/429/500/502/503/504 with backoff, honoring `Retry-After` when it fits the remaining budget. Each response is limited to 32 MiB and each package to 100 pages. A very large saved inventory can take many per-package budgets.
 
-`--offline` shows retained findings with explicit stale/unavailable freshness and performs no network requests. It exits **2** because advisory changes were not checked. Online exit codes follow `scan`: **1** for current findings, **0** for a completed query without findings (or `--fail-on never`), and **2** for operational failure or incomplete original coverage. Refreshing a partial scan cannot make its coverage complete. Automatic scheduling, refreshing all projects in one command, cross-inventory comparisons, and a list of newly affected projects remain pending.
+`--offline` shows retained findings with explicit stale/unavailable freshness and performs no network requests. It exits **2** because advisory changes were not checked. Online exit codes follow `scan`: **1** for current findings, **0** for a completed query without findings (or `--fail-on never`), and **2** for operational failure or incomplete original coverage. Refreshing a partial scan cannot make its coverage complete. Cross-inventory dependency comparisons remain pending.
+
+## Refreshing and tracking multiple projects
+
+Save dependency scans from multiple repositories in the same database, then use:
+
+```powershell
+cvefuzz refresh --all --database .cvefuzz/scans.sqlite3 --output .cvefuzz/batch.json --html .cvefuzz/batch.html
+cvefuzz projects --database .cvefuzz/scans.sqlite3 --output .cvefuzz/projects.json --html .cvefuzz/projects.html
+cvefuzz projects --newly-affected --since 2026-11-23T00:00:00Z --database .cvefuzz/scans.sqlite3
+```
+
+`--all` selects the latest **saved dependency attempt** for each repository root, in database save order. Inventory-only records do not replace dependency inventories. A failed latest scan is reported; an older successful inventory is never substituted. Roots use the current host's path case rules and are not opened. Moved repositories are separate projects until scanned at their new locations. Inventory-only projects are absent from this dependency-project list.
+
+Batch results report each project's outcome and finding/change counts. Failures do not stop other projects. Each project's cache remains atomic independently; an interrupted batch retains already completed project updates. Empty batches, blocked projects, provider/storage failures, offline batches, and incomplete original coverage exit **2**. Otherwise the finding exit policy also considers retained findings on skipped projects. Full provider records and finding history remain available using `history SCAN_ID`.
+
+`projects` lists advisory freshness, original coverage, and new finding events still present in the latest successful cache. New events survive unchanged refreshes; resolved/withdrawn findings and superseded scan inventories leave the current list. A project with existing findings can appear when an additional advisory group is detected. `--since` filters the event time inclusively and requires a timezone. An empty filtered list is not a safety conclusion. Listing exits **0** when the catalog was read successfully, even if project entries show stale, unavailable, or incomplete coverage.
+
+`--max-age-hours 24` controls freshness in project listings. An old cache, a failed/offline latest attempt, or an invalid/future success time is stale; a project without a successful refresh is unavailable. Findings from stale caches remain visible with their freshness. This is query age, not proof of upstream feed completeness.
+
+For periodic runs, `refresh --all --min-age-hours 24` skips a project only when its last successful refresh is recent enough and its latest attempt succeeded. Due, failed, unavailable, or future-dated results are queried again. Zero (the default) forces every selected inventory to refresh. Offline batches ignore the interval gate. Skips create no refresh-history entries. The interval applies to advisory queries and cannot complete a partial original inventory.
+
+See [local scheduling recipes](docs/advisory-refresh.md) for Windows Task Scheduler and Linux systemd timers, including overlap controls, runtime limits, exit handling, and removal commands. Scheduling is configured explicitly by the operator; no task is installed by the CLI.

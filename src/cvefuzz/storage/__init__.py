@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -60,6 +61,23 @@ class Store:
     def refresh_history(self, scan_id: str):
         rows = self.connection.execute("SELECT result_json FROM advisory_refreshes WHERE scan_id = ? ORDER BY rowid", (scan_id,))
         return [json.loads(row[0]) for row in rows]
+
+    def project_scans(self):
+        """Latest saved dependency attempt per root, including unsuccessful attempts.
+
+        Inventory-only scans do not replace dependency inventories. Save order is
+        authoritative; roots are compared using this host's path case rules.
+        """
+        projects = {}
+        rows = self.connection.execute("SELECT result_json FROM scans ORDER BY rowid DESC")
+        for row in rows:
+            scan = json.loads(row[0])
+            if not any(check.get("name") == "dependency_scan" and check.get("requested") for check in scan["checks"]):
+                continue
+            key = os.path.normcase(os.path.normpath(scan["root"]))
+            if key not in projects:
+                projects[key] = scan
+        return [projects[key] for key in sorted(projects)]
 
     def close(self):
         self.connection.close()
